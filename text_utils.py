@@ -5,6 +5,7 @@ import spacy
 
 from tqdm import tqdm
 
+
 def get_pairs(word):
     """
     Return set of symbol pairs in a word.
@@ -16,6 +17,7 @@ def get_pairs(word):
         pairs.add((prev_char, char))
         prev_char = char
     return pairs
+
 
 def text_standardize(text):
     """
@@ -32,9 +34,10 @@ def text_standardize(text):
     text = re.sub(r'[^\S\n]+', ' ', text)
     return text.strip()
 
+
 class TextEncoder(object):
     """
-    mostly a wrapper for a public python bpe tokenizer
+    Mostly a wrapper for a public python bpe tokenizer
     """
 
     def __init__(self, encoder_path, bpe_path):

@@ -4,8 +4,6 @@ import json
 import time
 from functools import partial
 import numpy as np
-# import tensorflow as tf
-# from tensorflow.python.framework import function
 from tqdm import tqdm
 
 def encode_dataset(*splits, encoder):

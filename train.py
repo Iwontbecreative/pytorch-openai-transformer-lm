@@ -1,6 +1,7 @@
 import argparse
 import os
 import random
+import logging
 
 import numpy as np
 import torch
@@ -16,6 +17,10 @@ from text_utils import TextEncoder
 from utils import (encode_dataset, iter_data,
                    ResultLogger, make_path)
 from loss import MultipleChoiceLossCompute
+
+
+logger = logging.getLogger("finetune")
+
 
 def transform_roc(X1, X2, X3):
     n_batch = len(X1)
@@ -38,7 +43,6 @@ def transform_roc(X1, X2, X3):
 
 
 def iter_apply(Xs, Ms, Ys):
-    # fns = [lambda x: np.concatenate(x, 0), lambda x: float(np.sum(x))]
     logits = []
     cost = 0
     with torch.no_grad():
@@ -74,15 +78,15 @@ def iter_predict(Xs, Ms):
 
 def log(save_dir, desc):
     global best_score
-    print("Logging")
+    logger.info("Logging")
     tr_logits, tr_cost = iter_apply(trX[:n_valid], trM[:n_valid], trY[:n_valid])
     va_logits, va_cost = iter_apply(vaX, vaM, vaY)
     tr_cost = tr_cost / len(trY[:n_valid])
     va_cost = va_cost / n_valid
     tr_acc = accuracy_score(trY[:n_valid], np.argmax(tr_logits, 1)) * 100.
     va_acc = accuracy_score(vaY, np.argmax(va_logits, 1)) * 100.
-    logger.log(n_epochs=n_epochs, n_updates=n_updates, tr_cost=tr_cost, va_cost=va_cost, tr_acc=tr_acc, va_acc=va_acc)
-    print('%d %d %.3f %.3f %.2f %.2f' % (n_epochs, n_updates, tr_cost, va_cost, tr_acc, va_acc))
+    res_logger.log(n_epochs=n_epochs, n_updates=n_updates, tr_cost=tr_cost, va_cost=va_cost, tr_acc=tr_acc, va_acc=va_acc)
+    logger.info('%d %d %.3f %.3f %.2f %.2f' % (n_epochs, n_updates, tr_cost, va_cost, tr_acc, va_acc))
     if submit:
         score = va_acc
         if score > best_score:
@@ -137,44 +141,63 @@ label_decoders = {
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--desc', type=str, help="Description")
-    parser.add_argument('--dataset', type=str)
-    parser.add_argument('--log_dir', type=str, default='log/')
-    parser.add_argument('--save_dir', type=str, default='save/')
-    parser.add_argument('--data_dir', type=str, default='data/')
-    parser.add_argument('--submission_dir', type=str, default='submission/')
-    parser.add_argument('--submit', action='store_true')
-    parser.add_argument('--analysis', action='store_true')
-    parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--n_iter', type=int, default=3)
-    parser.add_argument('--n_batch', type=int, default=8)
-    parser.add_argument('--max_grad_norm', type=int, default=1)
-    parser.add_argument('--lr', type=float, default=6.25e-5)
-    parser.add_argument('--lr_warmup', type=float, default=0.002)
-    parser.add_argument('--n_ctx', type=int, default=512)
-    parser.add_argument('--n_embd', type=int, default=768)
-    parser.add_argument('--n_head', type=int, default=12)
-    parser.add_argument('--n_layer', type=int, default=12)
-    parser.add_argument('--embd_pdrop', type=float, default=0.1)
-    parser.add_argument('--attn_pdrop', type=float, default=0.1)
-    parser.add_argument('--resid_pdrop', type=float, default=0.1)
-    parser.add_argument('--clf_pdrop', type=float, default=0.1)
-    parser.add_argument('--l2', type=float, default=0.01)
-    parser.add_argument('--vector_l2', action='store_true')
-    parser.add_argument('--opt', type=str, default='adam')
-    parser.add_argument('--afn', type=str, default='gelu')
-    parser.add_argument('--lr_schedule', type=str, default='warmup_linear')
-    parser.add_argument('--encoder_path', type=str, default='model/encoder_bpe_40000.json')
-    parser.add_argument('--bpe_path', type=str, default='model/vocab_40000.bpe')
-    parser.add_argument('--n_transfer', type=int, default=12)
-    parser.add_argument('--lm_coef', type=float, default=0.5)
-    parser.add_argument('--b1', type=float, default=0.9)
-    parser.add_argument('--b2', type=float, default=0.999)
-    parser.add_argument('--e', type=float, default=1e-8)
-    parser.add_argument('--n_valid', type=int, default=374)
+
+
+    optim_params = parser.add_argument_group("Optim")
+    reg_params = parser.add_argument_group("Regularization")
+    io_params = parser.add_argument_group("IO & paths")
+    model_params = parser.add_argument_group("Model")
+    training_params = parser.add_argument_group("Training")
+
+
+    # Training options
+    training_params.add_argument('--seed', type=int, default=42)
+    training_params.add_argument('--n_iter', type=int, default=3)
+    training_params.add_argument('--n_batch', type=int, default=8)
+
+    # Model options
+    model_params.add_argument('--n_ctx', type=int, default=512)
+    model_params.add_argument('--n_embd', type=int, default=768)
+    model_params.add_argument('--n_head', type=int, default=12)
+    model_params.add_argument('--n_layer', type=int, default=12)
+    model_params.add_argument('--afn', type=str, default='gelu')
+    model_params.add_argument('--n_valid', type=int, default=374)
+    model_params.add_argument('--n_transfer', type=int, default=12)
+    model_params.add_argument('--lm_coef', type=float, default=0.5)
+
+    # IO params
+    io_params.add_argument('--desc', type=str, help="Description of the task")
+    io_params.add_argument('--dataset', type=str)
+    io_params.add_argument('--log_dir', type=str, default='log/')
+    io_params.add_argument('--save_dir', type=str, default='save/')
+    io_params.add_argument('--data_dir', type=str, default='data/')
+    io_params.add_argument('--submission_dir', type=str, default='submission/')
+    io_params.add_argument('--submit', action='store_true')
+    io_params.add_argument('--analysis', action='store_true')
+    io_params.add_argument('--encoder_path', type=str, default='model/encoder_bpe_40000.json')
+    io_params.add_argument('--bpe_path', type=str, default='model/vocab_40000.bpe')
+
+
+    # Regularization params
+    reg_params.add_argument('--embd_pdrop', type=float, default=0.1)
+    reg_params.add_argument('--attn_pdrop', type=float, default=0.1)
+    reg_params.add_argument('--resid_pdrop', type=float, default=0.1)
+    reg_params.add_argument('--clf_pdrop', type=float, default=0.1)
+    reg_params.add_argument('--l2', type=float, default=0.01)
+    reg_params.add_argument('--vector_l2', action='store_true')
+    reg_params.add_argument('--max_grad_norm', type=int, default=1)
+
+    # Optim params
+    optim_params.add_argument('--opt', type=str, default='adam')
+    optim_params.add_argument('--lr', type=float, default=6.25e-5)
+    optim_params.add_argument('--lr_warmup', type=float, default=0.002)
+    optim_params.add_argument('--lr_schedule', type=str, default='warmup_linear')
+    optim_params.add_argument('--b1', type=float, default=0.9)
+    optim_params.add_argument('--b2', type=float, default=0.999)
+    optim_params.add_argument('--e', type=float, default=1e-8)
 
     args = parser.parse_args()
-    print(args)
+    logger.info(args)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -193,14 +216,14 @@ if __name__ == '__main__':
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     n_gpu = torch.cuda.device_count()
-    print("device", device, "n_gpu", n_gpu)
+    logger.info("device {} n_gpu {}".format(device, n_gpu))
 
-    logger = ResultLogger(path=os.path.join(log_dir, '{}.jsonl'.format(desc)), **args.__dict__)
+    res_logger = ResultLogger(path=os.path.join(log_dir, '{}.jsonl'.format(desc)), **args.__dict__)
     text_encoder = TextEncoder(args.encoder_path, args.bpe_path)
     encoder = text_encoder.encoder
     n_vocab = len(text_encoder.encoder)
 
-    print("Encoding dataset...")
+    logger.info("Encoding dataset...")
     ((trX1, trX2, trX3, trY),
      (vaX1, vaX2, vaX3, vaY),
      (teX1, teX2, teX3)) = encode_dataset(*rocstories(data_dir, n_valid=args.n_valid),
@@ -255,17 +278,24 @@ if __name__ == '__main__':
 
     n_updates = 0
     n_epochs = 0
+
+    # Note Thibault: What is this?
     if dataset != 'stsb':
         trYt = trY
+
     if submit:
         path = os.path.join(save_dir, desc, 'best_params')
         torch.save(dh_model.state_dict(), make_path(path))
+
+
     best_score = 0
+
     for i in range(args.n_iter):
-        print("running epoch", i)
+        logging.info("running epoch {}".format(i))
         run_epoch()
         n_epochs += 1
         log(save_dir, desc)
+
     if submit:
         path = os.path.join(save_dir, desc, 'best_params')
         dh_model.load_state_dict(torch.load(path))
